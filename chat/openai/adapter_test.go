@@ -3,37 +3,34 @@ package openai
 import (
 	"testing"
 
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/shared"
 	"github.com/quailyquaily/uniai/chat"
-	openaiapi "github.com/sashabaranov/go-openai"
 )
 
 func TestToChatOptions(t *testing.T) {
-	req := openaiapi.ChatCompletionRequest{
-		Model: "gpt-4.1-mini",
-		Messages: []openaiapi.ChatCompletionMessage{
-			{Role: openaiapi.ChatMessageRoleUser, Content: "hello"},
+	req := openai.ChatCompletionNewParams{
+		Model: openai.ChatModel("gpt-4.1-mini"),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.UserMessage("hello"),
 		},
-		Temperature:      0.7,
-		TopP:             0.9,
-		MaxTokens:        123,
-		Stop:             []string{"END"},
-		PresencePenalty:  0.1,
-		FrequencyPenalty: 0.2,
-		User:             "u1",
-		Tools: []openaiapi.Tool{{
-			Type: openaiapi.ToolTypeFunction,
-			Function: &openaiapi.FunctionDefinition{
+		Temperature:      openai.Float(0.7),
+		TopP:             openai.Float(0.9),
+		MaxTokens:        openai.Int(123),
+		Stop:             openai.ChatCompletionNewParamsStopUnion{OfStringArray: []string{"END"}},
+		PresencePenalty:  openai.Float(0.1),
+		FrequencyPenalty: openai.Float(0.2),
+		User:             openai.String("u1"),
+		Tools: []openai.ChatCompletionToolUnionParam{
+			openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 				Name:        "get_weather",
-				Description: "desc",
-				Parameters:  map[string]any{"type": "object"},
-			},
-		}},
-		ToolChoice: openaiapi.ToolChoice{
-			Type: openaiapi.ToolTypeFunction,
-			Function: openaiapi.ToolFunction{
-				Name: "get_weather",
-			},
+				Description: openai.String("desc"),
+				Parameters:  shared.FunctionParameters(map[string]any{"type": "object"}),
+			}),
 		},
+		ToolChoice: openai.ToolChoiceOptionFunctionToolChoice(openai.ChatCompletionNamedToolChoiceFunctionParam{
+			Name: "get_weather",
+		}),
 	}
 
 	opts, err := toChatOptions(req)

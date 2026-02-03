@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 	"github.com/quailyquaily/uniai/chat"
-	openai "github.com/sashabaranov/go-openai"
 )
 
 type Config struct {
@@ -17,7 +19,7 @@ type Config struct {
 }
 
 type Provider struct {
-	client       *openai.Client
+	client       openai.Client
 	defaultModel string
 }
 
@@ -25,131 +27,96 @@ func New(cfg Config) (*Provider, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("openai api key is required")
 	}
-	clientCfg := openai.DefaultConfig(cfg.APIKey)
+
+	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
 	if cfg.BaseURL != "" {
-		clientCfg.BaseURL = cfg.BaseURL
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
 	return &Provider{
-		client:       openai.NewClientWithConfig(clientCfg),
+		client:       openai.NewClient(opts...),
 		defaultModel: cfg.DefaultModel,
 	}, nil
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
-	payload, err := buildRequest(req, p.defaultModel)
+	params, err := buildParams(req, p.defaultModel)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.client.CreateChatCompletion(ctx, payload)
+	resp, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 	return toResult(resp), nil
 }
 
-func buildRequest(req *chat.Request, defaultModel string) (openai.ChatCompletionRequest, error) {
+func buildParams(req *chat.Request, defaultModel string) (openai.ChatCompletionNewParams, error) {
 	model := req.Model
 	if model == "" {
 		model = defaultModel
 	}
 	if model == "" {
-		return openai.ChatCompletionRequest{}, fmt.Errorf("model is required")
+		return openai.ChatCompletionNewParams{}, fmt.Errorf("model is required")
 	}
 
-	messages := make([]openai.ChatCompletionMessage, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		msg := openai.ChatCompletionMessage{
-			Role:       m.Role,
-			Content:    m.Content,
-			Name:       m.Name,
-			ToolCallID: m.ToolCallID,
-		}
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]openai.ToolCall, 0, len(m.ToolCalls))
-			for _, tc := range m.ToolCalls {
-				msg.ToolCalls = append(msg.ToolCalls, openai.ToolCall{
-					ID:   tc.ID,
-					Type: openai.ToolType(tc.Type),
-					Function: openai.FunctionCall{
-						Name:      tc.Function.Name,
-						Arguments: tc.Function.Arguments,
-					},
-				})
-			}
-		}
-		messages = append(messages, msg)
+	messages, err := toMessages(req.Messages)
+	if err != nil {
+		return openai.ChatCompletionNewParams{}, err
 	}
 
-	payload := openai.ChatCompletionRequest{
-		Model:    model,
+	params := openai.ChatCompletionNewParams{
+		Model:    openai.ChatModel(model),
 		Messages: messages,
 	}
 
 	if req.Options.Temperature != nil {
-		payload.Temperature = float32(*req.Options.Temperature)
+		params.Temperature = openai.Float(*req.Options.Temperature)
 	}
 	if req.Options.TopP != nil {
-		payload.TopP = float32(*req.Options.TopP)
+		params.TopP = openai.Float(*req.Options.TopP)
 	}
 	if req.Options.MaxTokens != nil {
+		maxTokens := int64(*req.Options.MaxTokens)
 		if useMaxCompletionTokens(model) {
-			payload.MaxCompletionTokens = *req.Options.MaxTokens
+			params.MaxCompletionTokens = openai.Int(maxTokens)
 		} else {
-			payload.MaxTokens = *req.Options.MaxTokens
+			params.MaxTokens = openai.Int(maxTokens)
 		}
 	}
 	if len(req.Options.Stop) > 0 {
-		payload.Stop = append([]string{}, req.Options.Stop...)
+		params.Stop = openai.ChatCompletionNewParamsStopUnion{
+			OfStringArray: append([]string{}, req.Options.Stop...),
+		}
 	}
 	if req.Options.PresencePenalty != nil {
-		payload.PresencePenalty = float32(*req.Options.PresencePenalty)
+		params.PresencePenalty = openai.Float(*req.Options.PresencePenalty)
 	}
 	if req.Options.FrequencyPenalty != nil {
-		payload.FrequencyPenalty = float32(*req.Options.FrequencyPenalty)
+		params.FrequencyPenalty = openai.Float(*req.Options.FrequencyPenalty)
 	}
 	if req.Options.User != nil {
-		payload.User = *req.Options.User
+		params.User = openai.String(*req.Options.User)
 	}
 
 	if len(req.Tools) > 0 {
-		payload.Tools = make([]openai.Tool, 0, len(req.Tools))
-		for _, tool := range req.Tools {
-			if tool.Type != "function" {
-				continue
-			}
-			def := &openai.FunctionDefinition{
-				Name:        tool.Function.Name,
-				Description: tool.Function.Description,
-				Parameters:  json.RawMessage(tool.Function.ParametersJSONSchema),
-			}
-			if tool.Function.Strict != nil {
-				def.Strict = *tool.Function.Strict
-			}
-			payload.Tools = append(payload.Tools, openai.Tool{
-				Type:     openai.ToolTypeFunction,
-				Function: def,
-			})
+		tools, err := toToolParams(req.Tools)
+		if err != nil {
+			return openai.ChatCompletionNewParams{}, err
 		}
+		params.Tools = tools
 	}
 
 	if req.ToolChoice != nil {
-		switch req.ToolChoice.Mode {
-		case "auto", "none", "required":
-			payload.ToolChoice = req.ToolChoice.Mode
-		case "function":
-			payload.ToolChoice = openai.ToolChoice{
-				Type: openai.ToolTypeFunction,
-				Function: openai.ToolFunction{
-					Name: req.ToolChoice.FunctionName,
-				},
-			}
-		}
+		params.ToolChoice = toToolChoice(req.ToolChoice)
 	}
 
-	return payload, nil
+	return params, nil
 }
 
-func toResult(resp openai.ChatCompletionResponse) *chat.Result {
+func toResult(resp *openai.ChatCompletion) *chat.Result {
+	if resp == nil {
+		return &chat.Result{Warnings: []string{"openai response is nil"}}
+	}
 	text := ""
 	var toolCalls []chat.ToolCall
 	for _, choice := range resp.Choices {
@@ -173,12 +140,147 @@ func toResult(resp openai.ChatCompletionResponse) *chat.Result {
 		Model:     resp.Model,
 		ToolCalls: toolCalls,
 		Usage: chat.Usage{
-			InputTokens:  resp.Usage.PromptTokens,
-			OutputTokens: resp.Usage.CompletionTokens,
-			TotalTokens:  resp.Usage.TotalTokens,
+			InputTokens:  int(resp.Usage.PromptTokens),
+			OutputTokens: int(resp.Usage.CompletionTokens),
+			TotalTokens:  int(resp.Usage.TotalTokens),
 		},
 		Raw: resp,
 	}
+}
+
+func toMessages(input []chat.Message) ([]openai.ChatCompletionMessageParamUnion, error) {
+	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(input))
+	for _, m := range input {
+		switch m.Role {
+		case chat.RoleSystem:
+			msg := openai.ChatCompletionSystemMessageParam{
+				Content: openai.ChatCompletionSystemMessageParamContentUnion{OfString: openai.String(m.Content)},
+			}
+			if m.Name != "" {
+				msg.Name = openai.String(m.Name)
+			}
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfSystem: &msg})
+		case chat.RoleUser:
+			msg := openai.ChatCompletionUserMessageParam{
+				Content: openai.ChatCompletionUserMessageParamContentUnion{OfString: openai.String(m.Content)},
+			}
+			if m.Name != "" {
+				msg.Name = openai.String(m.Name)
+			}
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfUser: &msg})
+		case chat.RoleAssistant:
+			msg := openai.ChatCompletionAssistantMessageParam{}
+			if m.Content != "" {
+				msg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{OfString: openai.String(m.Content)}
+			}
+			if m.Name != "" {
+				msg.Name = openai.String(m.Name)
+			}
+			if len(m.ToolCalls) > 0 {
+				msg.ToolCalls = toToolCallParams(m.ToolCalls)
+			}
+			out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: &msg})
+		case chat.RoleTool:
+			if m.ToolCallID == "" {
+				return nil, fmt.Errorf("tool_call_id is required for tool messages")
+			}
+			out = append(out, openai.ToolMessage(m.Content, m.ToolCallID))
+		default:
+			out = append(out, openai.UserMessage(m.Content))
+		}
+	}
+	return out, nil
+}
+
+func toToolParams(tools []chat.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
+	out := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Type != "function" {
+			continue
+		}
+		fn := shared.FunctionDefinitionParam{
+			Name: tool.Function.Name,
+		}
+		if tool.Function.Description != "" {
+			fn.Description = openai.String(tool.Function.Description)
+		}
+		if tool.Function.Strict != nil {
+			fn.Strict = openai.Bool(*tool.Function.Strict)
+		}
+		if len(tool.Function.ParametersJSONSchema) > 0 {
+			var params map[string]any
+			if err := json.Unmarshal(tool.Function.ParametersJSONSchema, &params); err != nil {
+				return nil, err
+			}
+			fn.Parameters = shared.FunctionParameters(params)
+		}
+		out = append(out, openai.ChatCompletionFunctionTool(fn))
+	}
+	return out, nil
+}
+
+func toToolChoice(choice *chat.ToolChoice) openai.ChatCompletionToolChoiceOptionUnionParam {
+	switch choice.Mode {
+	case "none":
+		return openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: openai.String(string(openai.ChatCompletionToolChoiceOptionAutoNone)),
+		}
+	case "required":
+		return openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: openai.String(string(openai.ChatCompletionToolChoiceOptionAutoRequired)),
+		}
+	case "function":
+		return openai.ToolChoiceOptionFunctionToolChoice(openai.ChatCompletionNamedToolChoiceFunctionParam{
+			Name: choice.FunctionName,
+		})
+	default:
+		return openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: openai.String(string(openai.ChatCompletionToolChoiceOptionAutoAuto)),
+		}
+	}
+}
+
+func toToolCallParams(calls []chat.ToolCall) []openai.ChatCompletionMessageToolCallUnionParam {
+	out := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(calls))
+	for _, call := range calls {
+		if call.Type != "" && call.Type != "function" {
+			continue
+		}
+		if call.ID == "" || call.Function.Name == "" {
+			continue
+		}
+		out = append(out, openai.ChatCompletionMessageToolCallUnionParam{
+			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+				ID: call.ID,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+					Name:      call.Function.Name,
+					Arguments: call.Function.Arguments,
+				},
+			},
+		})
+	}
+	return out
+}
+
+func toToolCalls(calls []openai.ChatCompletionMessageToolCallUnion) []chat.ToolCall {
+	out := make([]chat.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if call.Type != "function" {
+			continue
+		}
+		if call.Function.Name == "" {
+			continue
+		}
+		out = append(out, chat.ToolCall{
+			ID:   call.ID,
+			Type: call.Type,
+			Function: chat.ToolCallFunction{
+				Name:      call.Function.Name,
+				Arguments: call.Function.Arguments,
+			},
+		})
+	}
+	return out
 }
 
 func useMaxCompletionTokens(model string) bool {

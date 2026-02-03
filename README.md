@@ -6,7 +6,7 @@
 
 - Chat routing with OpenAI-compatible, Azure OpenAI, Anthropic, AWS Bedrock, and Susanoo providers.
 - Embedding, image, rerank, and classify helpers with provider-specific options.
-- Optional OpenAI-compatible adapter to reuse `github.com/sashabaranov/go-openai` request types.
+- Optional OpenAI-compatible adapter to reuse the official `github.com/openai/openai-go/v3` request types.
 
 ## Install
 
@@ -130,25 +130,25 @@ resp, err := client.Classify(ctx,
 
 ## OpenAI-compatible adapter
 
-If you already use `github.com/sashabaranov/go-openai`, you can reuse its request types:
+If you already use the official OpenAI Go SDK (`github.com/openai/openai-go/v3`), you can reuse its request types:
 
 ```go
 import (
     "context"
 
     "github.com/quailyquaily/uniai"
+    openai "github.com/openai/openai-go/v3"
     uniaiopenai "github.com/quailyquaily/uniai/chat/openai"
-    openai "github.com/sashabaranov/go-openai"
 )
 
 func example(ctx context.Context) error {
     base := uniai.New(uniai.Config{OpenAIAPIKey: "...", OpenAIModel: "gpt-5.2"})
     client := uniaiopenai.New(base)
 
-    _, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-        Model: "gpt-5.2",
-        Messages: []openai.ChatCompletionMessage{
-            {Role: openai.ChatMessageRoleUser, Content: "hello"},
+    _, err := client.CreateChatCompletion(ctx, openai.ChatCompletionNewParams{
+        Model: openai.ChatModel("gpt-5.2"),
+        Messages: []openai.ChatCompletionMessageParamUnion{
+            openai.UserMessage("hello"),
         },
     })
     return err

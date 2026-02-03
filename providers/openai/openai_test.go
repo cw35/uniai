@@ -3,6 +3,7 @@ package openai
 import (
 	"testing"
 
+	openai "github.com/openai/openai-go/v3"
 	"github.com/quailyquaily/uniai/chat"
 )
 
@@ -37,32 +38,38 @@ func TestBuildRequestMapping(t *testing.T) {
 		}(),
 	}
 
-	payload, err := buildRequest(req, "")
+	params, err := buildParams(req, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if payload.Model != "gpt-4.1-mini" {
+	if string(params.Model) != "gpt-4.1-mini" {
 		t.Fatalf("model mismatch")
 	}
-	if payload.Temperature != float32(temp) || payload.TopP != float32(topP) {
+	if !params.Temperature.Valid() || params.Temperature.Value != temp {
+		t.Fatalf("temperature mismatch")
+	}
+	if !params.TopP.Valid() || params.TopP.Value != topP {
 		t.Fatalf("temperature/top_p mismatch")
 	}
-	if payload.MaxCompletionTokens != maxTokens {
+	if !params.MaxCompletionTokens.Valid() || params.MaxCompletionTokens.Value != int64(maxTokens) {
 		t.Fatalf("max completion tokens mismatch")
 	}
-	if len(payload.Stop) != 1 || payload.Stop[0] != "END" {
+	if len(params.Stop.OfStringArray) != 1 || params.Stop.OfStringArray[0] != "END" {
 		t.Fatalf("stop mismatch")
 	}
-	if payload.PresencePenalty != float32(presence) || payload.FrequencyPenalty != float32(frequency) {
+	if !params.PresencePenalty.Valid() || params.PresencePenalty.Value != presence {
+		t.Fatalf("presence penalty mismatch")
+	}
+	if !params.FrequencyPenalty.Valid() || params.FrequencyPenalty.Value != frequency {
 		t.Fatalf("penalty mismatch")
 	}
-	if payload.User != user {
+	if !params.User.Valid() || params.User.Value != user {
 		t.Fatalf("user mismatch")
 	}
-	if len(payload.Tools) != 1 {
+	if len(params.Tools) != 1 {
 		t.Fatalf("tools not mapped")
 	}
-	if payload.ToolChoice == nil {
+	if params.ToolChoice == (openai.ChatCompletionToolChoiceOptionUnionParam{}) {
 		t.Fatalf("tool choice not mapped")
 	}
 }
@@ -76,11 +83,11 @@ func TestMaxCompletionTokensHeuristic(t *testing.T) {
 	}
 	maxTokens := 128
 	req.Options.MaxTokens = &maxTokens
-	payload, err := buildRequest(req, "")
+	params, err := buildParams(req, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if payload.MaxCompletionTokens != maxTokens {
+	if !params.MaxCompletionTokens.Valid() || params.MaxCompletionTokens.Value != int64(maxTokens) {
 		t.Fatalf("expected max_completion_tokens for o1 models")
 	}
 }

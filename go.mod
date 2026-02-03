@@ -6,7 +6,6 @@ require (
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/lyricat/goutils v1.2.3
 	github.com/openai/openai-go/v3 v3.2.0
-	github.com/sashabaranov/go-openai v1.41.2
 )
 
 require (
