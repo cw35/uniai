@@ -25,11 +25,11 @@ func (c *Client) chatWithToolEmulation(ctx context.Context, providerName string,
 		return nil, err
 	}
 
-	toolName, args, err := parseToolDecision(decisionResp.Text)
+	toolCalls, err := parseToolDecision(decisionResp.Text)
 	if err != nil {
 		return nil, err
 	}
-	if toolName == "" {
+	if len(toolCalls) == 0 {
 		if req.ToolChoice != nil && (req.ToolChoice.Mode == "required" || req.ToolChoice.Mode == "function") {
 			return nil, fmt.Errorf("tool emulation expected a tool call but got null")
 		}
@@ -41,27 +41,31 @@ func (c *Client) chatWithToolEmulation(ctx context.Context, providerName string,
 		return resp, err
 	}
 
-	if !toolExists(req.Tools, toolName) {
-		return nil, fmt.Errorf("tool %q not found in request", toolName)
+	if err := enforceToolChoice(req.ToolChoice, toolCalls); err != nil {
+		return nil, err
 	}
 
-	callID := fmt.Sprintf("emulated_%d", time.Now().UnixNano())
-	call := chat.ToolCall{
-		ID:   callID,
-		Type: "function",
-		Function: chat.ToolCallFunction{
-			Name:      toolName,
-			Arguments: string(args),
-		},
+	calls := make([]chat.ToolCall, 0, len(toolCalls))
+	for i, call := range toolCalls {
+		if !toolExists(req.Tools, call.Name) {
+			return nil, fmt.Errorf("tool %q not found in request", call.Name)
+		}
+		callID := fmt.Sprintf("emulated_%d_%d", time.Now().UnixNano(), i)
+		calls = append(calls, chat.ToolCall{
+			ID:   callID,
+			Type: "function",
+			Function: chat.ToolCallFunction{
+				Name:      call.Name,
+				Arguments: string(call.Arguments),
+			},
+		})
 	}
 	resp := &chat.Result{
-		Model: decisionResp.Model,
-		ToolCalls: []chat.ToolCall{
-			call,
-		},
+		Model:     decisionResp.Model,
+		ToolCalls: calls,
 		Messages: []chat.Message{{
 			Role:      chat.RoleAssistant,
-			ToolCalls: []chat.ToolCall{call},
+			ToolCalls: calls,
 		}},
 		Usage:    decisionResp.Usage,
 		Raw:      decisionResp.Raw,
@@ -128,61 +132,115 @@ func buildToolDecisionPrompt(req *chat.Request) (string, error) {
 	lines := []string{
 		"You are a tool-calling engine.",
 		"When you need a tool, output ONLY JSON:",
-		`{"tool": "get_weather", "arguments": {"city": "Tokyo"}}`,
+		`{"tools": [{"tool": "get_weather", "arguments": {"city": "Tokyo"}}]}`,
 		"If no tool needed, output:",
-		`{"tool": null, "arguments": {}}`,
+		`{"tools": []}`,
 		fmt.Sprintf("Available tools (JSON): %s", string(data)),
 	}
 	if req.ToolChoice != nil {
 		switch req.ToolChoice.Mode {
 		case "none":
-			lines = append(lines, "You MUST NOT call any tool. Return tool=null.")
+			lines = append(lines, "You MUST NOT call any tool. Return tools=[].")
 		case "required":
-			lines = append(lines, "You MUST call a tool. tool must not be null.")
+			lines = append(lines, "You MUST call at least one tool. tools must not be empty.")
 		case "function":
 			if req.ToolChoice.FunctionName != "" {
-				lines = append(lines, fmt.Sprintf("You MUST call the tool named %q.", req.ToolChoice.FunctionName))
+				lines = append(lines, fmt.Sprintf("You MUST call the tool named %q. tools must contain exactly one item.", req.ToolChoice.FunctionName))
 			}
 		}
 	}
 	return strings.Join(lines, "\n"), nil
 }
 
-func parseToolDecision(text string) (string, json.RawMessage, error) {
+type emulatedToolCall struct {
+	Name      string
+	Arguments json.RawMessage
+}
+
+func parseToolDecision(text string) ([]emulatedToolCall, error) {
 	payload, err := extractJSONPayload(text)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	var decision struct {
+		Tools     json.RawMessage `json:"tools"`
 		Tool      json.RawMessage `json:"tool"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(payload, &decision); err != nil {
-		return "", nil, err
+		return nil, err
+	}
+	if len(decision.Tools) > 0 {
+		return parseToolsArray(decision.Tools)
 	}
 	if len(decision.Tool) == 0 {
-		return "", decision.Arguments, nil
+		return nil, nil
 	}
-	toolRaw := strings.TrimSpace(string(decision.Tool))
-	if toolRaw == "null" || toolRaw == `""` {
-		return "", decision.Arguments, nil
+	call, ok, err := parseSingleTool(decision.Tool, decision.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return []emulatedToolCall{call}, nil
+}
+
+func parseToolsArray(raw json.RawMessage) ([]emulatedToolCall, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "null" {
+		return nil, nil
+	}
+	var items []struct {
+		Tool      json.RawMessage `json:"tool"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("tools must be an array: %w", err)
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	out := make([]emulatedToolCall, 0, len(items))
+	for _, item := range items {
+		call, ok, err := parseSingleTool(item.Tool, item.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, call)
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func parseSingleTool(toolRaw json.RawMessage, argsRaw json.RawMessage) (emulatedToolCall, bool, error) {
+	if len(toolRaw) == 0 {
+		return emulatedToolCall{}, false, nil
+	}
+	raw := strings.TrimSpace(string(toolRaw))
+	if raw == "null" || raw == `""` {
+		return emulatedToolCall{}, false, nil
 	}
 	var toolName string
-	if err := json.Unmarshal(decision.Tool, &toolName); err != nil {
-		return "", nil, fmt.Errorf("tool must be string or null: %w", err)
+	if err := json.Unmarshal(toolRaw, &toolName); err != nil {
+		return emulatedToolCall{}, false, fmt.Errorf("tool must be string or null: %w", err)
 	}
 	toolName = strings.TrimSpace(toolName)
 	if toolName == "" {
-		return "", decision.Arguments, nil
+		return emulatedToolCall{}, false, nil
 	}
-	args := decision.Arguments
+	args := argsRaw
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)
 	}
 	if !json.Valid(args) {
-		return "", nil, fmt.Errorf("tool arguments must be valid JSON")
+		return emulatedToolCall{}, false, fmt.Errorf("tool arguments must be valid JSON")
 	}
-	return toolName, args, nil
+	return emulatedToolCall{Name: toolName, Arguments: args}, true, nil
 }
 
 func extractJSONPayload(text string) ([]byte, error) {
@@ -222,6 +280,33 @@ func toolExists(tools []chat.Tool, name string) bool {
 		}
 	}
 	return false
+}
+
+func enforceToolChoice(choice *chat.ToolChoice, calls []emulatedToolCall) error {
+	if choice == nil {
+		return nil
+	}
+	switch choice.Mode {
+	case "none":
+		if len(calls) > 0 {
+			return fmt.Errorf("tool_choice none forbids tool calls")
+		}
+	case "required":
+		if len(calls) == 0 {
+			return fmt.Errorf("tool_choice required expects at least one tool call")
+		}
+	case "function":
+		if strings.TrimSpace(choice.FunctionName) == "" {
+			return fmt.Errorf("tool_choice function_name is required")
+		}
+		if len(calls) != 1 {
+			return fmt.Errorf("tool_choice function expects exactly one tool call")
+		}
+		if calls[0].Name != choice.FunctionName {
+			return fmt.Errorf("tool_choice function expects %q, got %q", choice.FunctionName, calls[0].Name)
+		}
+	}
+	return nil
 }
 
 func cloneChatRequest(req *chat.Request) *chat.Request {
