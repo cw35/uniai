@@ -41,6 +41,7 @@ func WithStopWords(stops ...string) ChatOption       { return chat.WithStopWords
 func WithPresencePenalty(v float64) ChatOption       { return chat.WithPresencePenalty(v) }
 func WithFrequencyPenalty(v float64) ChatOption      { return chat.WithFrequencyPenalty(v) }
 func WithUser(user string) ChatOption                { return chat.WithUser(user) }
+func WithToolsEmulation(enabled bool) ChatOption     { return chat.WithToolsEmulation(enabled) }
 func WithTools(tools []Tool) ChatOption              { return chat.WithTools(tools) }
 func WithToolChoice(choice ToolChoice) ChatOption    { return chat.WithToolChoice(choice) }
 

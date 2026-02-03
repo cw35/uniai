@@ -69,6 +69,7 @@ type Options struct {
 	Anthropic        structs.JSONMap `json:"anthropic_options,omitempty"`
 	Bedrock          structs.JSONMap `json:"bedrock_options,omitempty"`
 	Susanoo          structs.JSONMap `json:"susanoo_options,omitempty"`
+	ToolsEmulation   bool            `json:"tools_emulation,omitempty"`
 }
 
 type Request struct {
@@ -161,6 +162,10 @@ func WithFrequencyPenalty(v float64) Option {
 
 func WithUser(user string) Option {
 	return func(r *Request) { r.Options.User = &user }
+}
+
+func WithToolsEmulation(enabled bool) Option {
+	return func(r *Request) { r.Options.ToolsEmulation = enabled }
 }
 
 func WithOpenAIOptions(opts structs.JSONMap) Option {

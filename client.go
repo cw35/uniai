@@ -67,7 +67,20 @@ func (c *Client) Chat(ctx context.Context, opts ...chat.Option) (*chat.Result, e
 	if providerName == "" {
 		providerName = "openai"
 	}
+	resp, err := c.chatOnce(ctx, providerName, req)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Tools) == 0 {
+		return resp, nil
+	}
+	if len(resp.ToolCalls) > 0 {
+		return resp, nil
+	}
+	return c.chatWithToolEmulation(ctx, providerName, req)
+}
 
+func (c *Client) chatOnce(ctx context.Context, providerName string, req *chat.Request) (*chat.Result, error) {
 	switch providerName {
 	case "openai", "openai_custom", "deepseek", "xai":
 		base := c.cfg.OpenAIAPIBase
