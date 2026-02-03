@@ -16,7 +16,7 @@ This package is intended to live in a Go module that provides `go.mod`.
 go get github.com/quailyquaily/uniai
 ```
 
-## Quick Start (Chat)
+## Chat
 
 ```go
 package main
@@ -71,7 +71,7 @@ Supported provider names:
 - `bedrock`
 - `susanoo`
 
-## Tool calling
+### Tool calling
 
 ```go
 resp, err := client.Chat(ctx,
@@ -195,10 +195,6 @@ All configuration is provided via `uniai.Config`. Only the fields required for t
 - Susanoo: `SusanooAPIBase`, `SusanooAPIKey`
 - Embeddings/Rerank/Classify (Jina): `JinaAPIKey`, `JinaAPIBase`
 - Gemini: `GeminiAPIKey`, `GeminiAPIBase`
-
-## Tool calling support
-
-OpenAI-compatible, Azure, and Anthropic providers map tools and tool choice. Bedrock currently returns a warning in `Result.Warnings` when tools are provided.
 
 ## Development
 

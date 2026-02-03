@@ -32,26 +32,35 @@ type anthropicMessage struct {
 }
 
 type anthropicContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Input     any    `json:"input,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   any    `json:"content,omitempty"`
+	IsError   *bool  `json:"is_error,omitempty"`
 }
 
 type anthropicRequest struct {
-	Model         string             `json:"model"`
-	System        string             `json:"system,omitempty"`
-	Messages      []anthropicMessage `json:"messages"`
-	MaxTokens     int                `json:"max_tokens"`
-	Temperature   *float64           `json:"temperature,omitempty"`
-	TopP          *float64           `json:"top_p,omitempty"`
-	TopK          *int               `json:"top_k,omitempty"`
-	StopSequences []string           `json:"stop_sequences,omitempty"`
-	Metadata      *anthropicMetadata `json:"metadata,omitempty"`
+	Model         string               `json:"model"`
+	System        string               `json:"system,omitempty"`
+	Messages      []anthropicMessage   `json:"messages"`
+	MaxTokens     int                  `json:"max_tokens"`
+	Temperature   *float64             `json:"temperature,omitempty"`
+	TopP          *float64             `json:"top_p,omitempty"`
+	TopK          *int                 `json:"top_k,omitempty"`
+	StopSequences []string             `json:"stop_sequences,omitempty"`
+	Metadata      *anthropicMetadata   `json:"metadata,omitempty"`
+	Tools         []anthropicTool      `json:"tools,omitempty"`
+	ToolChoice    *anthropicToolChoice `json:"tool_choice,omitempty"`
 }
 
 type anthropicResponse struct {
-	Content []anthropicContentPart `json:"content"`
-	Model   string                 `json:"model"`
-	Usage   struct {
+	Content    []anthropicContentPart `json:"content"`
+	Model      string                 `json:"model"`
+	StopReason string                 `json:"stop_reason,omitempty"`
+	Usage      struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
@@ -59,6 +68,18 @@ type anthropicResponse struct {
 
 type anthropicMetadata struct {
 	UserID string `json:"user_id,omitempty"`
+}
+
+type anthropicTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	InputSchema any    `json:"input_schema"`
+}
+
+type anthropicToolChoice struct {
+	Type                   string `json:"type"`
+	Name                   string `json:"name,omitempty"`
+	DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
@@ -76,21 +97,50 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	systemParts := make([]string, 0, 1)
 	messages := make([]anthropicMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
-		if m.Role == chat.RoleSystem {
+		switch m.Role {
+		case chat.RoleSystem:
 			if m.Content != "" {
 				systemParts = append(systemParts, m.Content)
 			}
 			continue
-		}
-		if m.Role != chat.RoleUser && m.Role != chat.RoleAssistant {
+		case chat.RoleUser:
+			msg := anthropicMessage{Role: "user"}
+			if m.Content != "" {
+				msg.Content = append(msg.Content, anthropicContentPart{Type: "text", Text: m.Content})
+			}
+			if len(msg.Content) > 0 {
+				messages = append(messages, msg)
+			}
+		case chat.RoleAssistant:
+			msg := anthropicMessage{Role: "assistant"}
+			if m.Content != "" {
+				msg.Content = append(msg.Content, anthropicContentPart{Type: "text", Text: m.Content})
+			}
+			if len(m.ToolCalls) > 0 {
+				toolParts, err := toAnthropicToolUses(m.ToolCalls)
+				if err != nil {
+					return nil, err
+				}
+				msg.Content = append(msg.Content, toolParts...)
+			}
+			if len(msg.Content) > 0 {
+				messages = append(messages, msg)
+			}
+		case chat.RoleTool:
+			if m.ToolCallID == "" {
+				return nil, fmt.Errorf("tool_call_id is required for tool messages")
+			}
+			messages = append(messages, anthropicMessage{
+				Role: "user",
+				Content: []anthropicContentPart{{
+					Type:      "tool_result",
+					ToolUseID: m.ToolCallID,
+					Content:   m.Content,
+				}},
+			})
+		default:
 			return nil, fmt.Errorf("anthropic provider does not support role %q", m.Role)
 		}
-		messages = append(messages, anthropicMessage{
-			Role: m.Role,
-			Content: []anthropicContentPart{
-				{Type: "text", Text: m.Content},
-			},
-		})
 	}
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("at least one non-system message is required")
@@ -109,6 +159,24 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 		Temperature:   req.Options.Temperature,
 		TopP:          req.Options.TopP,
 		StopSequences: req.Options.Stop,
+	}
+	if len(req.Tools) > 0 {
+		tools, err := toAnthropicTools(req.Tools)
+		if err != nil {
+			return nil, err
+		}
+		if len(tools) > 0 {
+			body.Tools = tools
+		}
+	}
+	if req.ToolChoice != nil {
+		choice, err := toAnthropicToolChoice(req.ToolChoice)
+		if err != nil {
+			return nil, err
+		}
+		if choice != nil {
+			body.ToolChoice = choice
+		}
 	}
 	applyAnthropicOptions(&body, req.Options.Anthropic)
 	data, err := json.Marshal(body)
@@ -143,24 +211,34 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 		return nil, err
 	}
 
-	text := ""
-	if len(out.Content) > 0 {
-		text = out.Content[0].Text
+	textParts := make([]string, 0, len(out.Content))
+	toolCalls := make([]chat.ToolCall, 0)
+	for _, part := range out.Content {
+		switch part.Type {
+		case "text":
+			if strings.TrimSpace(part.Text) != "" {
+				textParts = append(textParts, part.Text)
+			}
+		case "tool_use":
+			call, err := fromAnthropicToolUse(part)
+			if err != nil {
+				return nil, err
+			}
+			toolCalls = append(toolCalls, call)
+		}
 	}
+	text := strings.Join(textParts, "\n")
 
 	result := &chat.Result{
-		Text:  text,
-		Model: out.Model,
+		Text:      text,
+		Model:     out.Model,
+		ToolCalls: toolCalls,
 		Usage: chat.Usage{
 			InputTokens:  out.Usage.InputTokens,
 			OutputTokens: out.Usage.OutputTokens,
 			TotalTokens:  out.Usage.InputTokens + out.Usage.OutputTokens,
 		},
 		Raw: out,
-	}
-
-	if len(req.Tools) > 0 {
-		result.Warnings = append(result.Warnings, "tools not supported for anthropic provider yet")
 	}
 
 	return result, nil
@@ -179,6 +257,104 @@ func applyAnthropicOptions(body *anthropicRequest, opts structs.JSONMap) {
 	if userID := readUserID(opt); userID != "" {
 		body.Metadata = &anthropicMetadata{UserID: userID}
 	}
+}
+
+func toAnthropicTools(tools []chat.Tool) ([]anthropicTool, error) {
+	out := make([]anthropicTool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Type != "function" {
+			continue
+		}
+		if tool.Function.Name == "" {
+			continue
+		}
+		var schema any
+		if len(tool.Function.ParametersJSONSchema) > 0 {
+			if err := json.Unmarshal(tool.Function.ParametersJSONSchema, &schema); err != nil {
+				return nil, err
+			}
+		} else {
+			schema = map[string]any{"type": "object"}
+		}
+		at := anthropicTool{
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+			InputSchema: schema,
+		}
+		out = append(out, at)
+	}
+	return out, nil
+}
+
+func toAnthropicToolChoice(choice *chat.ToolChoice) (*anthropicToolChoice, error) {
+	if choice == nil {
+		return nil, nil
+	}
+	switch choice.Mode {
+	case "auto":
+		return &anthropicToolChoice{Type: "auto"}, nil
+	case "none":
+		return &anthropicToolChoice{Type: "none"}, nil
+	case "required":
+		return &anthropicToolChoice{Type: "any"}, nil
+	case "function":
+		if strings.TrimSpace(choice.FunctionName) == "" {
+			return nil, fmt.Errorf("tool_choice function_name is required")
+		}
+		return &anthropicToolChoice{Type: "tool", Name: choice.FunctionName}, nil
+	default:
+		return nil, nil
+	}
+}
+
+func toAnthropicToolUses(calls []chat.ToolCall) ([]anthropicContentPart, error) {
+	out := make([]anthropicContentPart, 0, len(calls))
+	for _, call := range calls {
+		if call.Function.Name == "" {
+			continue
+		}
+		id := strings.TrimSpace(call.ID)
+		if id == "" {
+			return nil, fmt.Errorf("tool call id is required for anthropic tool_use")
+		}
+		args := strings.TrimSpace(call.Function.Arguments)
+		if args == "" {
+			args = "{}"
+		}
+		var input any
+		if err := json.Unmarshal([]byte(args), &input); err != nil {
+			return nil, fmt.Errorf("invalid tool call arguments: %w", err)
+		}
+		out = append(out, anthropicContentPart{
+			Type:  "tool_use",
+			ID:    id,
+			Name:  call.Function.Name,
+			Input: input,
+		})
+	}
+	return out, nil
+}
+
+func fromAnthropicToolUse(part anthropicContentPart) (chat.ToolCall, error) {
+	if strings.TrimSpace(part.ID) == "" || strings.TrimSpace(part.Name) == "" {
+		return chat.ToolCall{}, fmt.Errorf("anthropic tool_use missing id or name")
+	}
+	args := "{}"
+	if part.Input != nil {
+		data, err := json.Marshal(part.Input)
+		if err != nil {
+			return chat.ToolCall{}, err
+		}
+		args = string(data)
+	}
+	return chat.ToolCall{
+		ID:   part.ID,
+		Type: "function",
+		Function: chat.ToolCallFunction{
+			Name:      part.Name,
+			Arguments: args,
+		},
+	}, nil
 }
 
 func readUserID(opt *structs.JSONMap) string {
