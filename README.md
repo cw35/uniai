@@ -88,6 +88,35 @@ resp, err := client.Chat(ctx,
 )
 ```
 
+Some models may not support native tool calling. You can enable tools emulation with:
+
+```go
+resp, err := client.Chat(ctx,
+    uniai.WithModel("your-model"),
+    uniai.WithMessages(uniai.User("What's the weather in Tokyo?")),
+    uniai.WithTools([]uniai.Tool{
+        uniai.FunctionTool("get_weather", "Get current weather", []byte(`{
+            "type": "object",
+            "properties": { "city": { "type": "string" } },
+            "required": ["city"]
+        }`)),
+        uniai.FunctionTool("get_direction", "Get a route from 2 addresses", []byte(`{
+            "type": "object",
+            "properties": { "address_from": { "type": "string" }, "address_to": { "type": "string" } },
+            "required": ["address_from", "address_to"]
+        }`)),
+    }),
+    uniai.WithToolChoice(uniai.ToolChoiceAuto()),
+    uniai.WithToolsEmulation(true),
+)
+```
+
+Behavior:
+
+- The client always sends `tools` and `tool_choice` to the upstream provider first.
+- If the upstream response contains `tool_calls`, they are returned as-is.
+- If there are tools but no `tool_calls`, the uniai will try to choose a tool and generate a tool call based on the response text.
+
 ## Embeddings
 
 ```go
@@ -169,7 +198,7 @@ All configuration is provided via `uniai.Config`. Only the fields required for t
 
 ## Tool calling support
 
-OpenAI-compatible and Azure providers map tools and tool choice. Anthropic and Bedrock currently return a warning in `Result.Warnings` when tools are provided.
+OpenAI-compatible, Azure, and Anthropic providers map tools and tool choice. Bedrock currently returns a warning in `Result.Warnings` when tools are provided.
 
 ## Development
 
