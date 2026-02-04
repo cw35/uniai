@@ -157,15 +157,16 @@ func (p *Provider) createTask(ctx context.Context, task *taskRequest, debugFn fu
 	return out.Data.TraceID, nil
 }
 
+const (
+	pollInterval   = 3 * time.Second
+	maxPollRetries = 100
+)
+
 func (p *Provider) pollResult(ctx context.Context, traceID string, debugFn func(string, string)) (*taskResultResponse, error) {
-	for {
+	for attempt := 0; attempt < maxPollRetries; attempt++ {
 		result, err := p.fetchResult(ctx, traceID, debugFn)
 		if err != nil {
 			return nil, err
-		}
-		if result.Data.Status == 1 || result.Data.Status == 2 {
-			time.Sleep(3 * time.Second)
-			continue
 		}
 		if result.Data.Status == 3 {
 			return result, nil
@@ -173,7 +174,14 @@ func (p *Provider) pollResult(ctx context.Context, traceID string, debugFn func(
 		if result.Data.Status == 4 {
 			return nil, errors.New("susanoo task failed")
 		}
+		// Status 1 (pending), 2 (running), or unknown: wait and retry.
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("susanoo poll cancelled: %w", ctx.Err())
+		case <-time.After(pollInterval):
+		}
 	}
+	return nil, fmt.Errorf("susanoo poll exceeded max retries (%d)", maxPollRetries)
 }
 
 func (p *Provider) fetchResult(ctx context.Context, traceID string, debugFn func(string, string)) (*taskResultResponse, error) {
