@@ -53,6 +53,7 @@ type taskResultResponse struct {
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
+	debugFn := req.Options.DebugFn
 	if p.cfg.APIBase == "" || p.cfg.APIKey == "" {
 		return nil, fmt.Errorf("susanoo api base and api key are required")
 	}
@@ -92,18 +93,16 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	traceID, err := p.createTask(ctx, &taskRequest{
 		Messages: req.Messages,
 		Params:   params,
-	})
+	}, debugFn)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := p.pollResult(ctx, traceID)
+	result, err := p.pollResult(ctx, traceID, debugFn)
 	if err != nil {
 		return nil, err
 	}
-	if p.cfg.Debug {
-		diag.LogJSON(true, "susanoo.chat.response", result)
-	}
+	diag.LogJSON(p.cfg.Debug, debugFn, "susanoo.chat.response", result)
 
 	text := ""
 	if val, ok := result.Data.Result["response"]; ok {
@@ -123,14 +122,12 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	}, nil
 }
 
-func (p *Provider) createTask(ctx context.Context, task *taskRequest) (string, error) {
+func (p *Provider) createTask(ctx context.Context, task *taskRequest, debugFn func(string, string)) (string, error) {
 	data, err := json.Marshal(task)
 	if err != nil {
 		return "", err
 	}
-	if p.cfg.Debug {
-		diag.LogText(true, "susanoo.chat.request", string(data))
-	}
+	diag.LogText(p.cfg.Debug, debugFn, "susanoo.chat.request", string(data))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/tasks", p.cfg.APIBase), bytes.NewReader(data))
 	if err != nil {
 		return "", err
@@ -148,9 +145,7 @@ func (p *Provider) createTask(ctx context.Context, task *taskRequest) (string, e
 	if err != nil {
 		return "", err
 	}
-	if p.cfg.Debug {
-		diag.LogText(true, "susanoo.chat.create_task.response", string(respData))
-	}
+	diag.LogText(p.cfg.Debug, debugFn, "susanoo.chat.create_task.response", string(respData))
 	var out taskResponse
 	if err := json.Unmarshal(respData, &out); err != nil {
 		return "", err
@@ -161,9 +156,9 @@ func (p *Provider) createTask(ctx context.Context, task *taskRequest) (string, e
 	return out.Data.TraceID, nil
 }
 
-func (p *Provider) pollResult(ctx context.Context, traceID string) (*taskResultResponse, error) {
+func (p *Provider) pollResult(ctx context.Context, traceID string, debugFn func(string, string)) (*taskResultResponse, error) {
 	for {
-		result, err := p.fetchResult(ctx, traceID)
+		result, err := p.fetchResult(ctx, traceID, debugFn)
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +175,7 @@ func (p *Provider) pollResult(ctx context.Context, traceID string) (*taskResultR
 	}
 }
 
-func (p *Provider) fetchResult(ctx context.Context, traceID string) (*taskResultResponse, error) {
+func (p *Provider) fetchResult(ctx context.Context, traceID string, debugFn func(string, string)) (*taskResultResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/tasks/result?trace_id=%s", p.cfg.APIBase, traceID), nil)
 	if err != nil {
 		return nil, err
@@ -198,9 +193,7 @@ func (p *Provider) fetchResult(ctx context.Context, traceID string) (*taskResult
 	if err != nil {
 		return nil, err
 	}
-	if p.cfg.Debug {
-		diag.LogText(true, "susanoo.chat.fetch_result.response", string(respData))
-	}
+	diag.LogText(p.cfg.Debug, debugFn, "susanoo.chat.fetch_result.response", string(respData))
 	var out taskResultResponse
 	if err := json.Unmarshal(respData, &out); err != nil {
 		return nil, err

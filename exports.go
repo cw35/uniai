@@ -21,6 +21,7 @@ type (
 	ToolChoice       = chat.ToolChoice
 	ToolCall         = chat.ToolCall
 	ToolCallFunction = chat.ToolCallFunction
+	DebugFn          = chat.DebugFn
 )
 
 const (
@@ -44,6 +45,7 @@ func WithPresencePenalty(v float64) ChatOption       { return chat.WithPresenceP
 func WithFrequencyPenalty(v float64) ChatOption      { return chat.WithFrequencyPenalty(v) }
 func WithUser(user string) ChatOption                { return chat.WithUser(user) }
 func WithToolsEmulation(enabled bool) ChatOption     { return chat.WithToolsEmulation(enabled) }
+func WithDebugFn(fn DebugFn) ChatOption              { return chat.WithDebugFn(fn) }
 func WithOpenAIOptions(opts structs.JSONMap) ChatOption {
 	return chat.WithOpenAIOptions(opts)
 }

@@ -45,23 +45,20 @@ func New(cfg Config) (*Provider, error) {
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
+	debugFn := req.Options.DebugFn
 	params, err := buildParams(req, p.defaultModel)
 	if err != nil {
 		return nil, err
 	}
-	if p.debug {
-		diag.LogJSON(true, "openai.chat.request", params)
-	}
+	diag.LogJSON(p.debug, debugFn, "openai.chat.request", params)
 	resp, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	if p.debug {
-		if raw := resp.RawJSON(); raw != "" {
-			diag.LogText(true, "openai.chat.response", raw)
-		} else {
-			diag.LogJSON(true, "openai.chat.response", resp)
-		}
+	if raw := resp.RawJSON(); raw != "" {
+		diag.LogText(p.debug, debugFn, "openai.chat.response", raw)
+	} else {
+		diag.LogJSON(p.debug, debugFn, "openai.chat.response", resp)
 	}
 	return toResult(resp), nil
 }

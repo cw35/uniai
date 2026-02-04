@@ -49,6 +49,7 @@ func New(cfg Config) (*Provider, error) {
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
+	debugFn := req.Options.DebugFn
 	messages, err := toMessages(req.Messages)
 	if err != nil {
 		return nil, err
@@ -96,20 +97,16 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	}
 
 	applyAzureOptions(&params, req.Options.Azure, req.Options.OpenAI)
-	if p.debug {
-		diag.LogJSON(true, "azure.chat.request", params)
-	}
+	diag.LogJSON(p.debug, debugFn, "azure.chat.request", params)
 
 	resp, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	if p.debug {
-		if raw := resp.RawJSON(); raw != "" {
-			diag.LogText(true, "azure.chat.response", raw)
-		} else {
-			diag.LogJSON(true, "azure.chat.response", resp)
-		}
+	if raw := resp.RawJSON(); raw != "" {
+		diag.LogText(p.debug, debugFn, "azure.chat.response", raw)
+	} else {
+		diag.LogJSON(p.debug, debugFn, "azure.chat.response", resp)
 	}
 
 	text := ""

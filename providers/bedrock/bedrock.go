@@ -65,6 +65,7 @@ type bedrockResponse struct {
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
+	debugFn := req.Options.DebugFn
 	if p.modelArn == "" {
 		return nil, fmt.Errorf("bedrock model arn is required")
 	}
@@ -114,9 +115,7 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	if err != nil {
 		return nil, err
 	}
-	if p.debug {
-		diag.LogText(true, "bedrock.chat.request", string(body))
-	}
+	diag.LogText(p.debug, debugFn, "bedrock.chat.request", string(body))
 
 	resp, err := p.client.InvokeModelWithContext(ctx, &bedrockruntime.InvokeModelInput{
 		ModelId:     aws.String(p.modelArn),
@@ -132,9 +131,7 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		return nil, err
 	}
-	if p.debug {
-		diag.LogText(true, "bedrock.chat.response", string(resp.Body))
-	}
+	diag.LogText(p.debug, debugFn, "bedrock.chat.response", string(resp.Body))
 
 	text := ""
 	if len(out.Content) > 0 {

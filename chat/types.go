@@ -49,6 +49,8 @@ type ToolChoice struct {
 	FunctionName string `json:"function_name,omitempty"`
 }
 
+type DebugFn func(label string, payload string)
+
 func ToolChoiceAuto() ToolChoice     { return ToolChoice{Mode: "auto"} }
 func ToolChoiceNone() ToolChoice     { return ToolChoice{Mode: "none"} }
 func ToolChoiceRequired() ToolChoice { return ToolChoice{Mode: "required"} }
@@ -70,6 +72,7 @@ type Options struct {
 	Bedrock          structs.JSONMap `json:"bedrock_options,omitempty"`
 	Susanoo          structs.JSONMap `json:"susanoo_options,omitempty"`
 	ToolsEmulation   bool            `json:"tools_emulation,omitempty"`
+	DebugFn          DebugFn         `json:"-"`
 }
 
 type Request struct {
@@ -166,6 +169,10 @@ func WithUser(user string) Option {
 
 func WithToolsEmulation(enabled bool) Option {
 	return func(r *Request) { r.Options.ToolsEmulation = enabled }
+}
+
+func WithDebugFn(fn DebugFn) Option {
+	return func(r *Request) { r.Options.DebugFn = fn }
 }
 
 func WithOpenAIOptions(opts structs.JSONMap) Option {

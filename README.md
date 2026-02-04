@@ -7,6 +7,7 @@
 - Chat routing with OpenAI-compatible, Azure OpenAI, Anthropic, AWS Bedrock, and Susanoo providers.
 - Embedding, image, rerank, and classify helpers with provider-specific options.
 - Optional OpenAI-compatible adapter to reuse the official `github.com/openai/openai-go/v3` request types.
+- Tool calling with emulation fallback (see [`docs/tool_emulation.md`](docs/tool_emulation.md)).
 
 ## Install
 
@@ -195,7 +196,6 @@ All configuration is provided via `uniai.Config`. Only the fields required for t
 - Susanoo: `SusanooAPIBase`, `SusanooAPIKey`
 - Embeddings/Rerank/Classify (Jina): `JinaAPIKey`, `JinaAPIBase`
 - Gemini: `GeminiAPIKey`, `GeminiAPIBase`
-- Debug logging: `Debug` (prints request/response payloads for chat providers)
 
 Example:
 
@@ -206,6 +206,40 @@ client := uniai.New(uniai.Config{
     OpenAIModel:  "gpt-5.2",
     Debug:        true,
 })
+```
+
+## Debug logging
+
+### Global debug
+
+Set `Config.Debug` to `true` to enable request/response logging for all calls:
+
+```go
+client := uniai.New(uniai.Config{
+    Provider:     "openai",
+    OpenAIAPIKey: "...",
+    OpenAIModel:  "gpt-5.2",
+    Debug:        true,
+})
+```
+
+If you want to capture request/response payloads without logging, use `WithDebugFn`:
+
+`WithDebugFn` overrides `Config.Debug`: when set, logs are suppressed and all debug output is sent to the callback.
+
+
+```go
+resp, err := client.Chat(ctx,
+    uniai.WithModel("gpt-5.2"),
+    uniai.WithMessages(uniai.User("hello")),
+    uniai.WithDebugFn(func(label, payload string) {
+        // handle debug payloads (request/response)
+        // - label: "{provider}.{function}.{request|response}"
+        // 	 - e.g. "openai.chat.request", "anthropic.chat.response"
+        // - payload: the content of the request/response
+        // store them, send to external logger, etc.
+    }),
+)
 ```
 
 ## Development

@@ -85,6 +85,7 @@ type anthropicToolChoice struct {
 }
 
 func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, error) {
+	debugFn := req.Options.DebugFn
 	if p.cfg.APIKey == "" {
 		return nil, fmt.Errorf("anthropic api key is required")
 	}
@@ -185,9 +186,7 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	if err != nil {
 		return nil, err
 	}
-	if p.cfg.Debug {
-		diag.LogText(true, "anthropic.chat.request", string(data))
-	}
+	diag.LogText(p.cfg.Debug, debugFn, "anthropic.chat.request", string(data))
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(data))
 	if err != nil {
@@ -207,9 +206,7 @@ func (p *Provider) Chat(ctx context.Context, req *chat.Request) (*chat.Result, e
 	if err != nil {
 		return nil, err
 	}
-	if p.cfg.Debug {
-		diag.LogText(true, "anthropic.chat.response", string(respData))
-	}
+	diag.LogText(p.cfg.Debug, debugFn, "anthropic.chat.response", string(respData))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("anthropic api error: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respData)))
 	}
