@@ -196,6 +196,9 @@ type emulatedToolCall struct {
 
 func parseToolDecision(text string) ([]emulatedToolCall, error) {
 	cleaned := stripNonJSONLines(text)
+	if strings.TrimSpace(cleaned) == "" {
+		return nil, nil
+	}
 	candidates, err := collectJSONCandidates(cleaned)
 	if err != nil {
 		return nil, err

@@ -45,6 +45,19 @@ func TestParseToolDecisionInvalidTool(t *testing.T) {
 	}
 }
 
+func TestParseToolDecisionEmpty(t *testing.T) {
+	cases := []string{"", "   ", "no tool needed"}
+	for _, input := range cases {
+		calls, err := parseToolDecision(input)
+		if err != nil {
+			t.Fatalf("unexpected error for %q: %v", input, err)
+		}
+		if len(calls) != 0 {
+			t.Fatalf("expected no calls for %q, got %d", input, len(calls))
+		}
+	}
+}
+
 func TestBuildToolDecisionPrompt(t *testing.T) {
 	req := &chat.Request{
 		Tools: []chat.Tool{
