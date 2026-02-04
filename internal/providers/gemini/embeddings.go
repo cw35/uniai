@@ -59,9 +59,15 @@ type geminiEmbedding struct {
 	Values []float64 `json:"values"`
 }
 
-func CreateEmbeddings(ctx context.Context, token, base string, inputs []string, options structs.JSONMap) ([]byte, error) {
+const defaultGeminiEmbeddingModel = "models/gemini-embedding-001"
+
+func CreateEmbeddings(ctx context.Context, token, base, model string, inputs []string, options structs.JSONMap) ([]byte, error) {
+	if model == "" {
+		model = defaultGeminiEmbeddingModel
+	}
+
 	payload := &geminiCreateEmbeddingsInput{}
-	loadGeminiEmbeddingsInput(payload, inputs, options)
+	loadGeminiEmbeddingsInput(payload, model, inputs, options)
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -69,7 +75,8 @@ func CreateEmbeddings(ctx context.Context, token, base string, inputs []string, 
 	}
 
 	base = normalizeGeminiBase(base)
-	url := fmt.Sprintf("%s/v1beta/models/gemini-embedding-001:embedContent", base)
+	modelName := strings.TrimPrefix(model, "models/")
+	url := fmt.Sprintf("%s/v1beta/models/%s:embedContent", base, modelName)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(data))
 	if err != nil {
@@ -144,7 +151,7 @@ func normalizeGeminiBase(base string) string {
 	return trimmed
 }
 
-func loadGeminiEmbeddingsInput(dst *geminiCreateEmbeddingsInput, inputs []string, options structs.JSONMap) {
+func loadGeminiEmbeddingsInput(dst *geminiCreateEmbeddingsInput, model string, inputs []string, options structs.JSONMap) {
 	for _, item := range inputs {
 		dst.Content.Parts = append(dst.Content.Parts, geminiPart{Text: item})
 	}
@@ -159,5 +166,5 @@ func loadGeminiEmbeddingsInput(dst *geminiCreateEmbeddingsInput, inputs []string
 		dst.OutputDimensionality = dimensions
 	}
 
-	dst.Model = "models/gemini-embedding-001"
+	dst.Model = model
 }
