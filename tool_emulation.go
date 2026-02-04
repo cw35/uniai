@@ -11,31 +11,46 @@ import (
 
 	"github.com/lyricat/goutils/structs"
 	"github.com/quailyquaily/uniai/chat"
+	"github.com/quailyquaily/uniai/internal/diag"
 )
 
 func (c *Client) chatWithToolEmulation(ctx context.Context, providerName string, req *chat.Request) (*chat.Result, error) {
 	if len(req.Tools) == 0 {
 		return c.chatOnce(ctx, providerName, req)
 	}
+	debugFn := req.Options.DebugFn
+	diag.LogJSON(c.cfg.Debug, debugFn, "tool_emulation.start", map[string]any{
+		"provider": providerName,
+		"tools":    len(req.Tools),
+		"mode":     req.Options.ToolsEmulationMode,
+	})
 
 	decisionReq, err := buildToolDecisionRequest(req)
 	if err != nil {
 		return nil, err
 	}
+	diag.LogJSON(c.cfg.Debug, debugFn, "tool_emulation.decision_request", decisionReq)
 	decisionResp, err := c.chatOnce(ctx, providerName, decisionReq)
 	if err != nil {
 		return nil, err
 	}
+	diag.LogText(c.cfg.Debug, debugFn, "tool_emulation.decision_response", decisionResp.Text)
 
 	toolCalls, err := parseToolDecision(decisionResp.Text)
 	if err != nil {
 		return nil, err
 	}
 	filteredCalls, dropped := filterUnknownTools(req.Tools, toolCalls)
+	diag.LogJSON(c.cfg.Debug, debugFn, "tool_emulation.parsed_calls", map[string]any{
+		"calls":   filteredCalls,
+		"dropped": dropped,
+	})
 	if len(filteredCalls) == 0 {
 		if req.ToolChoice != nil && (req.ToolChoice.Mode == "required" || req.ToolChoice.Mode == "function") {
+			diag.LogText(c.cfg.Debug, debugFn, "tool_emulation.no_calls", "tool_choice requires a tool but none was produced")
 			return nil, fmt.Errorf("tool emulation expected a tool call but got null")
 		}
+		diag.LogText(c.cfg.Debug, debugFn, "tool_emulation.fallback", "no tool calls produced; returning final response")
 		finalReq := buildFinalRequest(req)
 		resp, err := c.chatOnce(ctx, providerName, finalReq)
 		if resp != nil {
@@ -63,6 +78,7 @@ func (c *Client) chatWithToolEmulation(ctx context.Context, providerName string,
 			},
 		})
 	}
+	diag.LogJSON(c.cfg.Debug, debugFn, "tool_emulation.emulated_calls", calls)
 	resp := &chat.Result{
 		Model:     decisionResp.Model,
 		ToolCalls: calls,
