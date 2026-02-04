@@ -221,9 +221,6 @@ func parseToolDecision(text string) ([]emulatedToolCall, error) {
 		}
 		calls, ok, err := parseToolDecisionPayload([]byte(payload))
 		if err != nil {
-			if ok {
-				return nil, err
-			}
 			continue
 		}
 		if ok {
