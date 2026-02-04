@@ -192,6 +192,10 @@ func parseToolDecision(text string) ([]emulatedToolCall, error) {
 		}
 		calls, ok, err := parseToolDecisionPayload([]byte(payload))
 		if err != nil {
+			if ok {
+				// Recognized structure but invalid content; propagate error.
+				return nil, err
+			}
 			continue
 		}
 		if ok {

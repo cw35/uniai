@@ -3,6 +3,8 @@ package gemini
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -97,14 +99,30 @@ func CreateEmbeddings(ctx context.Context, token, base string, inputs []string, 
 		return nil, err
 	}
 
+	// Convert float64 values to base64-encoded little-endian float32 array
+	// to match the OpenAI base64 embedding format.
+	buf := new(bytes.Buffer)
+	for _, v := range geminiOutput.Embedding.Values {
+		if err := binary.Write(buf, binary.LittleEndian, float32(v)); err != nil {
+			return nil, fmt.Errorf("encoding embedding: %w", err)
+		}
+	}
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+
 	output := &createEmbeddingsOutput{
-		Model:  "models/gemini-embedding-001",
+		Model:  payload.Model,
 		Object: "list",
-		Data: make([]struct {
+		Data: []struct {
 			Object    string `json:"object"`
 			Embedding string `json:"embedding"`
 			Index     int    `json:"index"`
-		}, len(geminiOutput.Embedding.Values)),
+		}{
+			{
+				Object:    "embedding",
+				Embedding: encoded,
+				Index:     0,
+			},
+		},
 	}
 
 	return json.Marshal(output)

@@ -77,6 +77,9 @@ func (c *Client) Chat(ctx context.Context, opts ...chat.Option) (*chat.Result, e
 	if len(resp.ToolCalls) > 0 {
 		return resp, nil
 	}
+	if !req.Options.ToolsEmulation {
+		return resp, nil
+	}
 	return c.chatWithToolEmulation(ctx, providerName, req)
 }
 
